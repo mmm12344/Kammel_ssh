@@ -1574,6 +1574,14 @@ fi
   /// process directly.
   String _shQuote(String s) => "'${s.replaceAll("'", "'\\''")}'";
 
+  /// Both engines take their password through the *environment* of the client
+  /// process (`PGPASSWORD` / `MYSQL_PWD`), never through its command line: a
+  /// `-pSECRET` argv sits in `/proc/<pid>/cmdline`, readable by every user on
+  /// the box via `ps` for as long as the query runs, while a process
+  /// environment is readable only by its owner (and root). The wrapping
+  /// command line (`env VAR=…`, `docker exec -e VAR=…`) does flash the value
+  /// in `ps` for the instant it takes to spawn the client — the long-lived
+  /// exposure is the one this removes.
   Future<RemoteCmdResult> _executeSqlPostgres(String sql, DbConnectionProfile dbProfile) async {
     if (dbProfile.dockerContainer != null) {
       return runDocker(
@@ -1601,11 +1609,12 @@ fi
   Future<RemoteCmdResult> _executeSqlMysql(String sql, DbConnectionProfile dbProfile) async {
     if (dbProfile.dockerContainer != null) {
       return runDocker(
-          "exec -i ${_shQuote(dbProfile.dockerContainer!)} mysql -u${_shQuote(dbProfile.username)} -p${_shQuote(dbProfile.password)} "
+          "exec -i -e MYSQL_PWD=${_shQuote(dbProfile.password)} ${_shQuote(dbProfile.dockerContainer!)} "
+          "mysql -u${_shQuote(dbProfile.username)} "
           "${_shQuote(dbProfile.databaseName)} -h localhost -P ${dbProfile.port} -s -N -e ${_shQuote(sql)}");
     } else {
       return _run(
-          "mysql -u${_shQuote(dbProfile.username)} -p${_shQuote(dbProfile.password)} -h ${_shQuote(dbProfile.host)} "
+          "env MYSQL_PWD=${_shQuote(dbProfile.password)} mysql -u${_shQuote(dbProfile.username)} -h ${_shQuote(dbProfile.host)} "
           "-P ${dbProfile.port} ${_shQuote(dbProfile.databaseName)} -s -N -e ${_shQuote(sql)}");
     }
   }
@@ -1613,11 +1622,12 @@ fi
   Future<RemoteCmdResult> _executeSqlMysqlRaw(String sql, DbConnectionProfile dbProfile) async {
     if (dbProfile.dockerContainer != null) {
       return runDocker(
-          "exec -i ${_shQuote(dbProfile.dockerContainer!)} mysql -u${_shQuote(dbProfile.username)} -p${_shQuote(dbProfile.password)} "
+          "exec -i -e MYSQL_PWD=${_shQuote(dbProfile.password)} ${_shQuote(dbProfile.dockerContainer!)} "
+          "mysql -u${_shQuote(dbProfile.username)} "
           "${_shQuote(dbProfile.databaseName)} -h localhost -P ${dbProfile.port} -t -e ${_shQuote(sql)}");
     } else {
       return _run(
-          "mysql -u${_shQuote(dbProfile.username)} -p${_shQuote(dbProfile.password)} -h ${_shQuote(dbProfile.host)} "
+          "env MYSQL_PWD=${_shQuote(dbProfile.password)} mysql -u${_shQuote(dbProfile.username)} -h ${_shQuote(dbProfile.host)} "
           "-P ${dbProfile.port} ${_shQuote(dbProfile.databaseName)} -t -e ${_shQuote(sql)}");
     }
   }
