@@ -45,4 +45,17 @@ class SecureStore {
   Future<String?> readDeviceKey() => _storage.read(key: _deviceKeyKey);
   Future<void> writeDeviceKey(String pem) =>
       _storage.write(key: _deviceKeyKey, value: pem);
+
+  // ---- Database profile passwords ------------------------------------------
+  // Server console DB profiles (see ServerController) hold credentials too,
+  // and they belong in the same store as every other secret. A separate key
+  // prefix — not [_pwKey] — so a DB password write can never clobber an SSH
+  // profile's private key entry by accident, and so backups can collect the
+  // two families separately.
+
+  static String _dbPwKey(String id) => 'dbpw_$id';
+
+  Future<String?> readDbPassword(String id) => _storage.read(key: _dbPwKey(id));
+  Future<void> writeDbPassword(String id, String? value) =>
+      _put(_dbPwKey(id), value);
 }
