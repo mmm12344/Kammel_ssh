@@ -138,8 +138,27 @@ class DockerDfRow {
   });
 }
 
-class RemoteCmdResult {
-  final String stdout, stderr;
+/// Quotes an SQL identifier (table or column name) for the engine, after
+/// making sure it is *just* an identifier.
+///
+/// Names reaching the row builders come from `information_schema` listings —
+/// that is, from the database itself — so a hostile table name on a shared
+/// server (`x"; DROP TABLE users; --`) would otherwise ride its own way into
+/// a query the app then executes, backtick/quote doubling notwithstanding.
+/// Anything that is not a plain identifier (letters, digits, `_`, `$`; never
+/// starting with a digit) is refused with [FormatException] instead of being
+/// escaped, and the caller surfaces that as the panel's error text.
+String sqlIdent(String name, {required bool postgres}) {
+  if (!RegExp(r'^[A-Za-z_][A-Za-z0-9_$]*$').hasMatch(name)) {
+    throw FormatException('not a plain SQL identifier: "$name"');
+  }
+  return postgres ? '"$name"' : '`$name`';
+}
+
+/// Escapes [s] for an SQL single-quoted string literal ('' doubling).
+String sqlString(String s) => "'${s.replaceAll("'", "''")}'";
+
+class RemoteCmdResult {  final String stdout, stderr;
   final int? exitCode;
   const RemoteCmdResult(this.stdout, this.stderr, this.exitCode);
   bool get ok => exitCode == 0;
@@ -1347,7 +1366,7 @@ fi
               ON kcu.constraint_name = tc.constraint_name 
               AND kcu.table_schema = tc.table_schema 
               AND tc.constraint_type = 'PRIMARY KEY'
-          WHERE c.table_name = '$tableName' AND c.table_schema = 'public'
+          WHERE c.table_name = ${sqlString(tableName)} AND c.table_schema = 'public'
           ORDER BY c.ordinal_position;
         """;
         final colWrapped = "SELECT json_agg(t) FROM ($colQuery) t;";
@@ -1369,7 +1388,8 @@ fi
         }
         
         // 2. Fetch Rows
-        final rowQuery = "SELECT * FROM \"$tableName\" LIMIT 100;";
+        final rowQuery =
+            "SELECT * FROM ${sqlIdent(tableName, postgres: true)} LIMIT 100;";
         final rowWrapped = "SELECT json_agg(t) FROM ($rowQuery) t;";
         final rowRes = await _executeSqlPostgres(rowWrapped, dbProfile);
         if (rowRes.ok) {
@@ -1394,7 +1414,7 @@ fi
               c.column_default,
               c.column_key = 'PRI' AS is_primary
           FROM information_schema.columns c
-          WHERE c.table_name = '$tableName' AND c.table_schema = DATABASE() 
+          WHERE c.table_name = ${sqlString(tableName)} AND c.table_schema = DATABASE()
           ORDER BY c.ordinal_position;
         """;
         final colRes = await _executeSqlMysql(colQuery, dbProfile);
@@ -1425,7 +1445,9 @@ fi
         
         // MySQL Rows
         final colNames = dbColumns.map((c) => c['column_name'] as String).toList();
-        final rowRes = await _executeSqlMysql("SELECT * FROM `$tableName` LIMIT 100;", dbProfile);
+        final rowRes = await _executeSqlMysql(
+            "SELECT * FROM ${sqlIdent(tableName, postgres: false)} LIMIT 100;",
+            dbProfile);
         if (rowRes.ok) {
           dbRows = _parseTsv(rowRes.stdout, colNames);
         } else {
@@ -1481,18 +1503,18 @@ fi
     notifyListeners();
     
     try {
-      final columns = data.keys.toList();
+      final postgres = dbProfile.engine == 'postgres';
+      final columns = data.keys.map((c) => sqlIdent(c, postgres: postgres)).toList();
       final values = data.values.map((v) {
         if (v == null) return 'NULL';
-        final s = v.toString().replaceAll("'", "''");
-        return "'$s'";
+        return sqlString(v.toString());
       }).toList();
-      
+
       String sql;
-      if (dbProfile.engine == 'postgres') {
-        sql = 'INSERT INTO "$tableName" (${columns.map((c) => '"$c"').join(', ')}) VALUES (${values.join(', ')});';
+      if (postgres) {
+        sql = 'INSERT INTO ${sqlIdent(tableName, postgres: true)} (${columns.join(', ')}) VALUES (${values.join(', ')});';
       } else {
-        sql = 'INSERT INTO `$tableName` (${columns.map((c) => '`$c`').join(', ')}) VALUES (${values.join(', ')});';
+        sql = 'INSERT INTO ${sqlIdent(tableName, postgres: false)} (${columns.join(', ')}) VALUES (${values.join(', ')});';
       }
       
       RemoteCmdResult res;
@@ -1527,21 +1549,22 @@ fi
     notifyListeners();
     
     try {
+      final postgres = dbProfile.engine == 'postgres';
       final List<String> whereClauses = [];
       keys.forEach((col, val) {
+        final quoted = sqlIdent(col, postgres: postgres);
         if (val == null) {
-          whereClauses.add(dbProfile.engine == 'postgres' ? '"$col" IS NULL' : '`$col` IS NULL');
+          whereClauses.add('$quoted IS NULL');
         } else {
-          final s = val.toString().replaceAll("'", "''");
-          whereClauses.add(dbProfile.engine == 'postgres' ? '"$col" = \'$s\'' : '`$col` = \'$s\'');
+          whereClauses.add('$quoted = ${sqlString(val.toString())}');
         }
       });
-      
+
       String sql;
-      if (dbProfile.engine == 'postgres') {
-        sql = 'DELETE FROM "$tableName" WHERE ${whereClauses.join(' AND ')};';
+      if (postgres) {
+        sql = 'DELETE FROM ${sqlIdent(tableName, postgres: true)} WHERE ${whereClauses.join(' AND ')};';
       } else {
-        sql = 'DELETE FROM `$tableName` WHERE ${whereClauses.join(' AND ')};';
+        sql = 'DELETE FROM ${sqlIdent(tableName, postgres: false)} WHERE ${whereClauses.join(' AND ')};';
       }
       
       RemoteCmdResult res;
