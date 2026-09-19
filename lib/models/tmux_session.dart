@@ -73,3 +73,47 @@ class TmuxSession {
   static String shQuote(String value) =>
       "'${value.replaceAll("'", r"'\''")}'";
 }
+
+/// A tmux session a profile wants to exist on its server, created
+/// automatically on connect when missing — a named workspace, e.g. one per
+/// project, ready before the first key is typed.
+class TmuxAutostart {
+  final String name;
+
+  /// Start directory handed to `tmux new-session -c`. Empty means tmux's own
+  /// default (the shell's cwd at connect time).
+  final String path;
+
+  const TmuxAutostart({required this.name, this.path = ''});
+
+  Map<String, dynamic> toMap() => {'name': name, 'path': path};
+
+  factory TmuxAutostart.fromMap(Map<String, dynamic> map) => TmuxAutostart(
+        name: (map['name'] ?? '').toString(),
+        path: (map['path'] ?? '').toString(),
+      );
+
+  /// Which of [wanted] still need creating given the [existing] session names.
+  ///
+  /// This is the whole idempotence of auto-start: a session whose name already
+  /// exists on the server — created by a previous connect, or by the user by
+  /// hand — is left exactly as it is, never re-created under their feet.
+  /// Entries deduplicate by name (first wins) and blank names drop out.
+  static List<TmuxAutostart> ensurePlan(
+      Set<String> existing, List<TmuxAutostart> wanted) {
+    final seen = <String>{};
+    final plan = <TmuxAutostart>[];
+    for (final entry in wanted) {
+      final name = entry.name.trim();
+      if (name.isEmpty || existing.contains(name) || !seen.add(name)) continue;
+      plan.add(TmuxAutostart(name: name, path: entry.path));
+    }
+    return plan;
+  }
+
+  /// Creates the session detached, rooted at [path] when one was given.
+  String createCommand() => path.isEmpty
+      ? 'tmux new-session -d -s ${TmuxSession.shQuote(name)}'
+      : 'tmux new-session -d -s ${TmuxSession.shQuote(name)} '
+          '-c ${TmuxSession.shQuote(path)}';
+}
