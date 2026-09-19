@@ -937,6 +937,17 @@ const Map<String, String> enStrings = {
   'SESIONES': 'SESSIONS',
   'SESIÓN CAÍDA': 'SESSION DROPPED',
   'SESIÓN PERSISTENTE (TMUX)': 'PERSISTENT SESSION (TMUX)',
+  'DESCUBRIR SESIONES TMUX': 'DISCOVER TMUX SESSIONS',
+  'Muestra en la barra de sesiones las sesiones tmux que ya existen en el servidor, aunque no las haya abierto la app; toca una para adjuntarte a ella.':
+      'Lists in the session bar the tmux sessions that already exist on the server, even ones the app did not open; tap one to attach to it.',
+  'TMUX EN EL SERVIDOR': 'TMUX ON THE SERVER',
+  'Buscar sesiones tmux': 'Look for tmux sessions',
+  'No hay sesiones tmux abiertas en el servidor.':
+      'There are no tmux sessions open on the server.',
+  '1 ventana': '1 window',
+  '{0} ventanas': '{0} windows',
+  'adjunta': 'attached',
+  'ABIERTA': 'OPEN',
   'SILENCIAR': 'MUTE',
   'SIN ARCHIVOS': 'NO FILES',
   'SIN CAMBIOS PREPARADOS': 'NOTHING STAGED',

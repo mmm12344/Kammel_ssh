@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:xterm/xterm.dart';
 import '../models/connection_error.dart';
+import '../models/tmux_session.dart';
 import '../providers/app_state.dart';
 import 'agent_launcher_sheet.dart';
 import '../services/terminal_search.dart';
@@ -1434,6 +1435,10 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
   }
 
   void _showSessionsSheet(BuildContext context, AppState state) {
+    // A fresh answer every time the sheet opens. The refresh is a no-op unless
+    // the active profile opted into tmux discovery (see [AppState.refreshTmuxSessions]).
+    final active = state.activeSession;
+    if (active != null) unawaited(state.refreshTmuxSessions(active));
     showAdaptiveSheet(
       context,
       backgroundColor: AppColors.panel,
@@ -1462,9 +1467,11 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
               Flexible(
                 child: ListView.separated(
                   shrinkWrap: true,
-                  itemCount: s.sessions.length,
+                  itemCount: s.sessions.length + (_showsTmuxDiscovery(s) ? 1 : 0),
                   separatorBuilder: (_, _) => Hairline(),
-                  itemBuilder: (ctx, i) => _sessionSheetRow(sheetCtx, s, i),
+                  itemBuilder: (ctx, i) => i < s.sessions.length
+                      ? _sessionSheetRow(sheetCtx, s, i)
+                      : _tmuxDiscoverySection(sheetCtx, s),
                 ),
               ),
               Hairline(),
@@ -1581,6 +1588,116 @@ class _TerminalTabState extends State<TerminalTab> with WidgetsBindingObserver {
           child: Container(width: 3, color: tint),
         ),
       ],
+    );
+  }
+
+  // ---- tmux discovery ------------------------------------------------------
+  // The server's own tmux sessions, listed under the app's tabs in the
+  // sessions sheet when the profile opted in (see [AppState.refreshTmuxSessions]).
+
+  bool _showsTmuxDiscovery(AppState s) =>
+      s.activeSession?.activeProfile?.discoverTmuxSessions ?? false;
+
+  Widget _tmuxDiscoverySection(BuildContext sheetCtx, AppState s) {
+    final profile = s.activeSession?.activeProfile;
+    if (profile == null || !profile.discoverTmuxSessions) {
+      return const SizedBox.shrink();
+    }
+    final discovered = s.discoveredTmuxFor(profile.id);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 8, 2),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(tr('TMUX EN EL SERVIDOR'),
+                    style: AppText.label(11,
+                        color: AppColors.muted, spacing: 1.4)),
+              ),
+              IconTapTarget(
+                icon: Icons.refresh,
+                label: tr('Buscar sesiones tmux'),
+                size: 15,
+                color: AppColors.muted,
+                onTap: () {
+                  final active = s.activeSession;
+                  if (active != null) unawaited(s.refreshTmuxSessions(active));
+                },
+              ),
+            ],
+          ),
+        ),
+        if (discovered.isEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+            child: Text(tr('No hay sesiones tmux abiertas en el servidor.'),
+                style: AppText.body(11, color: AppColors.muted)),
+          )
+        else
+          for (final tmux in discovered)
+            _tmuxSheetRow(sheetCtx, s, profile, tmux),
+        const SizedBox(height: 4),
+      ],
+    );
+  }
+
+  Widget _tmuxSheetRow(BuildContext sheetCtx, AppState s,
+      ConnectionProfile profile, TmuxSession tmux) {
+    final isOpen = s.tmuxSessionIsOpen(profile.id, tmux.name);
+    final tint = profileTint(profile);
+    final meta = [
+      if (tmux.path.isNotEmpty) tmux.path,
+      tr(tmux.windows == 1 ? '1 ventana' : '{0} ventanas', [tmux.windows]),
+      if (tmux.isAttached) tr('adjunta'),
+    ].join(' · ');
+    return InkWell(
+      onTap: () {
+        Navigator.of(sheetCtx).pop();
+        s.attachTmuxSession(profile, tmux);
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Icon(Icons.terminal, size: 20, color: tint ?? AppColors.muted),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(tmux.name,
+                      style: AppText.mono(12,
+                          color: AppColors.bone, weight: FontWeight.w700),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis),
+                  if (meta.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(meta,
+                        style: AppText.mono(10, color: AppColors.muted),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis),
+                  ],
+                ],
+              ),
+            ),
+            if (isOpen) ...[
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  border: Border.all(color: AppColors.faint),
+                  borderRadius: BorderRadius.circular(3),
+                ),
+                child: Text(tr('ABIERTA'),
+                    style: AppText.label(8,
+                        color: AppColors.muted, spacing: 0.8)),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 
