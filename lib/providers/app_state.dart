@@ -1997,11 +1997,38 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       await prefs.setBool('settings_shortcuts_migrated_v3', true);
     }
 
-    // Migration v4: Reset default shortcuts to clean up unnecessary duplicates that are now standard in Row 1
+    // Migration v4: the shortcuts that moved into the built-in rows and layers
+    // (page keys, Home/End, ^C/^D, the control codes CTRL/NAV now ship) used to
+    // be cleaned up by **resetting the user's whole list to defaults** — which
+    // threw away every rename and custom key along with the duplicates. The
+    // same cleanup, without the reset: only entries still byte-identical to
+    // the old defaults are dropped; anything renamed or retyped is theirs (the
+    // rule migration v5 applies to ^A/^E/^K/^L).
+    const supersededByLayers = {
+      'Re Pág': r'\x1b[5~',
+      'Av Pág': r'\x1b[6~',
+      'Inicio': r'\x1b[H',
+      'Fin': r'\x1b[F',
+      '^C': r'\x03',
+      '^D': r'\x04',
+      '^DEL': r'\x1b[3;5~',
+      'S-Tab': r'\x1b[Z',
+      '^O': r'\x0f',
+      '^G': r'\x07',
+      '^L': r'\x0c',
+      '^R': r'\x12',
+      '^W': r'\x17',
+      '^J': r'\n',
+      '^U': r'\x15',
+    };
     final migratedV4 = prefs.getBool('settings_shortcuts_migrated_v4') ?? false;
     if (!migratedV4) {
-      _customShortcuts = getDefaultShortcuts();
-      await prefs.setString(_kCustomShortcuts, json.encode(_customShortcuts.map((s) => s.toJson()).toList()));
+      final before = _customShortcuts.length;
+      _customShortcuts
+          .removeWhere((s) => supersededByLayers[s.label] == s.value);
+      if (_customShortcuts.length != before) {
+        await prefs.setString(_kCustomShortcuts, json.encode(_customShortcuts.map((s) => s.toJson()).toList()));
+      }
       await prefs.setBool('settings_shortcuts_migrated_v4', true);
     }
 
