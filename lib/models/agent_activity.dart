@@ -46,18 +46,6 @@ extension AgentStateLabel on AgentState {
         AgentState.disconnected => tr('SIN CONEXIÓN'),
       };
 
-  /// One line saying what the state means, for the section header.
-  String get description => switch (this) {
-        AgentState.waiting =>
-          tr('Se detuvo esperando una respuesta tuya: una pregunta, un permiso o un menú.'),
-        AgentState.done =>
-          tr('Dejó de escribir sin pedirte nada, normalmente porque acabó.'),
-        AgentState.working => tr('Está produciendo salida ahora mismo.'),
-        AgentState.prompt =>
-          tr('Conectada, con el prompt libre y nada corriendo.'),
-        AgentState.connecting => tr('Abriendo la conexión.'),
-        AgentState.disconnected => tr('Sin conexión SSH viva.'),
-      };
 
   /// Sorting weight — lower is more urgent. Ties are broken by tab order, never
   /// by anything that moves on its own: cards reshuffling under the finger is

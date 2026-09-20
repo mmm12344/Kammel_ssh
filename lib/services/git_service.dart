@@ -235,8 +235,7 @@ class GitService {
   Future<GitCmdResult> fetch() =>
       _run(['fetch', '--prune'], timeout: _networkTimeout);
 
-  Future<GitCmdResult> pull({bool rebase = false}) =>
-      _run(['pull', if (rebase) '--rebase'], timeout: _networkTimeout);
+  Future<GitCmdResult> pull() => _run(['pull'], timeout: _networkTimeout);
 
   /// Pushes the current branch. When it has no upstream yet, [setUpstream]
   /// publishes it with `-u origin <branch>`.

@@ -153,7 +153,7 @@ class Terminal with Observable implements TerminalState, EscapeHandler {
   /// DEC mode 1007 (alternate scroll): whether the wheel may be translated
   /// into arrow keys while the alternate buffer is up.
   ///
-  /// Patched for KALA: defaults to **on**, the way every modern terminal
+  /// Patched for Kammel: defaults to **on**, the way every modern terminal
   /// ships it, so `less` and `man` still scroll by swipe — and so an
   /// application that sends `CSI ? 1007 l` because it does its own scrolling
   /// is actually obeyed instead of being fed arrow keys.

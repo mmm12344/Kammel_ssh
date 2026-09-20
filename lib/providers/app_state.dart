@@ -602,7 +602,6 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   static const String _kShortcutLayout = 'settings_shortcut_layout';
   static const String _kCustomShortcuts = 'settings_custom_shortcuts_json';
   static const String _kShortcutKeyHeight = 'settings_shortcut_key_height';
-  static const String _kShortcutKeyWidth = 'settings_shortcut_key_width';
   static const String _kShortcutRows = 'settings_shortcut_rows';
   static const String _kShortcutLayers = 'settings_shortcut_layers';
   static const String _kShortcutLayer = 'settings_shortcut_active_layer';
@@ -852,8 +851,6 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   double _shortcutKeyHeight = 28.0;
   double get shortcutKeyHeight => _shortcutKeyHeight;
 
-  double _shortcutKeyWidth = 36.0;
-  double get shortcutKeyWidth => _shortcutKeyWidth;
 
   /// How many rows the quick-keyboard grid gets. Columns are *derived* from
   /// this (see `TerminalQuickKeys`), which is what guarantees every key fits
@@ -2088,7 +2085,6 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     _shortcutKeyHeight = prefs.getDouble(_kShortcutKeyHeight) ?? 28.0;
-    _shortcutKeyWidth = prefs.getDouble(_kShortcutKeyWidth) ?? 36.0;
     _shortcutRows = (prefs.getInt(_kShortcutRows) ?? 1).clamp(1, 3);
 
     final layerIds = prefs.getStringList(_kShortcutLayers);
@@ -2220,14 +2216,6 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble(_kShortcutKeyHeight, value);
-  }
-
-  Future<void> setShortcutKeyWidth(double value) async {
-    if (_shortcutKeyWidth == value) return;
-    _shortcutKeyWidth = value;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setDouble(_kShortcutKeyWidth, value);
   }
 
   Future<void> setShortcutRows(int value) async {

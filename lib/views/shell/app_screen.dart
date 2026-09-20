@@ -5,8 +5,9 @@
 /// desktop shell puts the paneable ones side by side. `AppState.activeTabIndex`
 /// keeps storing the plain index, so every existing call site is unaffected.
 ///
-/// The git panel joins this enum as a paneable screen with no tab index once it
-/// has a desktop mount (it is a route pushed from the terminal toolbar today).
+/// The git panel is a paneable screen with no tab index: on the compact layout
+/// it is a route pushed from the terminal toolbar, on the desktop shell a real
+/// pane (see the enum entry below).
 enum AppScreen {
   connections(0),
   terminal(1),
@@ -22,7 +23,8 @@ enum AppScreen {
 
   /// The git panel. It has no tab index: on the compact layout it is a route
   /// pushed from the terminal toolbar, and on the desktop shell it is a real
-  /// pane. Excluded from [inTabOrder] for that reason.
+  /// pane (`GitPane`, mounted by the workspace). Excluded from [inTabOrder]
+  /// for that reason.
   git(-1);
 
   const AppScreen(this.tabIndex);
