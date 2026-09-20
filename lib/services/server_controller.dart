@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/connection_profile.dart';
 import '../models/db_connection_profile.dart';
 import '../l10n/l10n.dart';
+import 'secure_store.dart';
 
 /// Lifecycle of the server console: pick a server → connecting → managing.
 enum ServerPhase { pickServer, connecting, ready, error }
@@ -1071,14 +1072,50 @@ fi
 
   // ---- Database section methods ----
 
+  /// Loads the DB profiles attached to [sshProfileId] and resolves their
+  /// passwords from secure storage.
+  ///
+  /// Plain prefs hold the profile *without* its password ([DbConnectionProfile.toJsonPublic]),
+  /// the same split as SSH profiles — which is what this load also migrates:
+  /// a profile saved by an older build still carries its password inline, and
+  /// the first load moves it into the secure store and rewrites prefs without
+  /// it. Until the move succeeds the inline value keeps working, so a crash
+  /// mid-migration cannot lose a credential.
   Future<void> loadDbProfiles(String sshProfileId) async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final list = prefs.getStringList('db_profiles') ?? [];
-      dbProfiles = list
-          .map((item) => DbConnectionProfile.fromJson(item))
-          .where((p) => p.sshProfileId == sshProfileId)
-          .toList();
+      final rewritten = <String>[];
+      var migratedAny = false;
+      final resolved = <DbConnectionProfile>[];
+      for (final item in list) {
+        final map = json.decode(item) as Map<String, dynamic>;
+        var entry = item;
+        // Migration: a profile saved by an older build carries its password
+        // inline. Move it to secure storage and rewrite the prefs entry
+        // without it. Idempotent — the move only happens while an inline
+        // value is still there, so a crash mid-migration retries next load
+        // with the credential intact.
+        final inline = (map['password'] as String?) ?? '';
+        if (inline.isNotEmpty) {
+          final id = (map['id'] as String?) ?? '';
+          if (id.isNotEmpty) {
+            await SecureStore.instance.writeDbPassword(id, inline);
+            entry =
+                json.encode(DbConnectionProfile.fromMap(map).toMapPublic());
+            migratedAny = true;
+          }
+        }
+        rewritten.add(entry);
+        final p = DbConnectionProfile.fromMap(json.decode(entry));
+        final stored = await SecureStore.instance.readDbPassword(p.id);
+        resolved.add(stored == null ? p : p.copyWith(password: stored));
+      }
+      if (migratedAny) {
+        await prefs.setStringList('db_profiles', rewritten);
+      }
+      dbProfiles =
+          resolved.where((p) => p.sshProfileId == sshProfileId).toList();
     } catch (e) {
       debugPrint('Error loading db profiles: $e');
       dbProfiles = [];
@@ -1086,14 +1123,17 @@ fi
     notifyListeners();
   }
 
+  /// Persists [profile]: the password to secure storage, the rest to prefs.
   Future<void> saveDbProfile(DbConnectionProfile profile) async {
     try {
+      await SecureStore.instance.writeDbPassword(profile.id, profile.password);
       final prefs = await SharedPreferences.getInstance();
       final list = prefs.getStringList('db_profiles') ?? [];
       final profiles = list.map((item) => DbConnectionProfile.fromJson(item)).toList();
       profiles.removeWhere((p) => p.id == profile.id);
       profiles.add(profile);
-      await prefs.setStringList('db_profiles', profiles.map((p) => p.toJson()).toList());
+      await prefs.setStringList(
+          'db_profiles', profiles.map((p) => p.toJsonPublic()).toList());
       dbProfiles = profiles.where((p) => p.sshProfileId == profile.sshProfileId).toList();
       notifyListeners();
     } catch (e) {
@@ -1103,11 +1143,13 @@ fi
 
   Future<void> deleteDbProfile(String profileId) async {
     try {
+      await SecureStore.instance.writeDbPassword(profileId, null);
       final prefs = await SharedPreferences.getInstance();
       final list = prefs.getStringList('db_profiles') ?? [];
       final profiles = list.map((item) => DbConnectionProfile.fromJson(item)).toList();
       profiles.removeWhere((p) => p.id == profileId);
-      await prefs.setStringList('db_profiles', profiles.map((p) => p.toJson()).toList());
+      await prefs.setStringList(
+          'db_profiles', profiles.map((p) => p.toJsonPublic()).toList());
       if (profile != null) {
         dbProfiles = profiles.where((p) => p.sshProfileId == profile!.id).toList();
       }
