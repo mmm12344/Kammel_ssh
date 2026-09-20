@@ -925,6 +925,7 @@ const Map<String, String> zhStrings = {
   'SESIONES': '会话',
   'SESIÓN CAÍDA': '会话已断开',
   'SESIÓN PERSISTENTE (TMUX)': '持久会话（TMUX）',
+  'RESPONDER': '回复',
   'SILENCIAR': '静音',
   'SIN ARCHIVOS': '暂无文件',
   'SIN CAMBIOS PREPARADOS': '没有已暂存的更改',

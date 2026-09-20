@@ -6,6 +6,7 @@ import 'package:window_manager/window_manager.dart';
 import 'l10n/l10n.dart';
 import 'providers/app_state.dart';
 import 'services/agent_monitor.dart';
+import 'services/notification_service.dart';
 import 'services/tunnel_manager.dart';
 import 'services/window_geometry.dart';
 import 'theme/app_theme.dart';
@@ -65,6 +66,16 @@ Future<void> main() async {
     if (ctx == null) return false;
     return showHostKeyDialog(ctx, challenge);
   };
+
+  // A notification quick reply / direct reply arrives over the same channel
+  // while the process is still alive (the foreground service guarantees it):
+  // write it into that session exactly like the agents dashboard would. The
+  // native side falls back to launching the app when the engine is gone, so
+  // nothing here needs to handle a cold start.
+  NotificationService.setAgentInputHandler(
+      (sessionId, input, {submit = true, asPaste = false}) =>
+          appState.sendToSession(sessionId, input,
+              submit: submit, asPaste: asPaste));
 
   runApp(
     MultiProvider(

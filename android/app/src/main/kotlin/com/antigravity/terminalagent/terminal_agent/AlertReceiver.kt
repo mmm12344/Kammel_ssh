@@ -19,6 +19,8 @@ class AlertReceiver : BroadcastReceiver() {
         const val ACTION_AGENT_INPUT =
             "com.antigravity.terminalagent.action.AGENT_INPUT"
         const val EXTRA_INPUT = "kammel_input"
+        const val EXTRA_SUBMIT = "kammel_submit"
+        const val EXTRA_AS_PASTE = "kammel_as_paste"
         const val REMOTE_INPUT_KEY = "kammel_reply"
     }
 
@@ -26,13 +28,16 @@ class AlertReceiver : BroadcastReceiver() {
         if (intent.action != ACTION_AGENT_INPUT) return
         val sessionId = intent.getStringExtra(AlertNotifier.EXTRA_SESSION_ID) ?: return
 
-        // Fixed quick key ("1"/"2") or free text typed into the reply slot
-        // (submitted to the agent with a trailing Enter).
+        // Fixed quick key ("y"/"n"/Enter) from a notification action, or free
+        // text typed into the reply slot. How the text reaches the agent —
+        // raw keystrokes or a bracketed paste — and whether it is followed by
+        // Enter are decided by the Dart side, from the extras the action
+        // carried; keeping the decision there is what lets notification
+        // replies and the agents dashboard behave identically.
         val input = intent.getStringExtra(EXTRA_INPUT)
             ?: RemoteInput.getResultsFromIntent(intent)
                 ?.getCharSequence(REMOTE_INPUT_KEY)
                 ?.toString()
-                ?.let { "$it\r" }
             ?: return
 
         // The agent got its answer: this alert is resolved either way.
@@ -42,7 +47,12 @@ class AlertReceiver : BroadcastReceiver() {
         if (channel != null) {
             channel.invokeMethod(
                 "agentInput",
-                mapOf("sessionId" to sessionId, "input" to input),
+                mapOf(
+                    "sessionId" to sessionId,
+                    "input" to input,
+                    "submit" to intent.getBooleanExtra(EXTRA_SUBMIT, true),
+                    "asPaste" to intent.getBooleanExtra(EXTRA_AS_PASTE, false),
+                ),
             )
         } else {
             // Engine gone (process was killed, so the session is gone too):
