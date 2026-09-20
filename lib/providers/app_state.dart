@@ -2870,6 +2870,9 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       tunnels: profile.tunnels,
       useTmux: profile.useTmux,
       useDeviceKey: profile.useDeviceKey,
+      colorHex: profile.colorHex,
+      isProduction: profile.isProduction,
+      jumpProfileId: profile.jumpProfileId,
     );
     await saveProfile(copy);
     return copy;
