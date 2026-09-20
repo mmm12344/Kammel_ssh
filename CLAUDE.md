@@ -38,6 +38,16 @@ All app state is centralized in a single `ChangeNotifier`, `AppState` (`lib/prov
 - Connecting to a saved profile (`connectToSSH`) creates a *new* session and connects it via `_connectSessionToSSH`, then switches the active tab to the terminal.
 - `disconnect` / session loss tears down the session's SSH connection and marks it as disconnected.
 
+### tmux sessions on the server (discovery and auto-start)
+
+The app's session list used to be blind to anything it did not open itself. Two profile-level opt-ins fix that, and both are covered by `test/tmux_session_test.dart`.
+
+**Discovery** (`ConnectionProfile.discoverTmuxSessions`, off by default, toggle in the profile form): on connect and whenever the sessions sheet opens, `AppState.refreshTmuxSessions` runs one `tmux ls -F` over a one-off exec channel and stores the answer **by profile id** — the server owns it, two tabs into the same machine share it. The sessions sheet grows a "TMUX EN EL SERVIDOR" section; tapping a row opens a tab through `tmux new-session -A -s`, so joining a session that died repairs it instead of erroring. `TerminalSession.attachedTmuxSession` records which tmux session a tab runs inside (both `useTmux` tabs and attach tabs), which is how the sheet marks already-open entries ABIERTA instead of unclaimed. `TmuxSession.parseLs` puts the *name last* and rebuilds it from any extra separators: tmux only forbids `:` and `.` in names, so a name may legally contain a pipe — the four fixed fields never do.
+
+**Auto-start** (`ConnectionProfile.tmuxAutostart`, a list of `{name, path}`): on connect, `AppState._ensureTmuxAutostart` probes tmux with the same `ls` (exit 127 = no tmux on the server) and creates **only the missing** sessions detached (`TmuxAutostart.ensurePlan` is the whole idempotence: an existing session under that name is never re-created, whatever is running in it; entries dedupe by name). Every creation *and* every failure is reported into the terminal; none of it can fail the connection. With `useTmux` on, the tab attaches to the **first** entry — creating it in place, with its start directory — instead of the profile's `kammel-<slug>` default. User-entered names and paths go through `TmuxSession.shQuote` (the slug was quote-safe by construction; user input is not).
+
+The two compose: auto-started sessions appear in the discovered list, and the discovery sheet is where a user attaches to the ones they didn't start.
+
 ### Terminal touch gestures
 
 Four touch gestures share the same pixels, and they are resolved by the **gesture arena**, not by ordering `if`s. The failure mode is silent: one recogniser starts winning and another simply stops working, so `test/terminal_gestures_test.dart` pins down who wins for each gesture shape. Run it after touching anything below.

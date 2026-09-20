@@ -2879,6 +2879,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       groupId: profile.groupId,
       tunnels: profile.tunnels,
       useTmux: profile.useTmux,
+      discoverTmuxSessions: profile.discoverTmuxSessions,
+      tmuxAutostart: profile.tmuxAutostart,
       useDeviceKey: profile.useDeviceKey,
     );
     await saveProfile(copy);
