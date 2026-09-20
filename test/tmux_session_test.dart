@@ -72,4 +72,72 @@ void main() {
       expect(TmuxSession.shQuote(r'odd\'), r"'odd\'");
     });
   });
+
+  group('TmuxAutostart.ensurePlan', () {
+    test('only the sessions that do not exist yet get created', () {
+      final plan = TmuxAutostart.ensurePlan(
+        {'api', 'kammel-web'},
+        const [
+          TmuxAutostart(name: 'api', path: '/srv/api'),
+          TmuxAutostart(name: 'worker', path: '/srv/worker'),
+        ],
+      );
+      expect(plan, hasLength(1));
+      expect(plan.single.name, 'worker');
+    });
+
+    test('an existing session is never re-created — even with another path',
+        () {
+      // The point of the feature: whatever the server already has under that
+      // name (a running agent, the user's own session) is left alone.
+      expect(
+          TmuxAutostart.ensurePlan({'api'}, const [
+            TmuxAutostart(name: 'api', path: '/somewhere/else'),
+          ]),
+          isEmpty);
+    });
+
+    test('duplicate names in the list deduplicate, first entry wins', () {
+      final plan = TmuxAutostart.ensurePlan(const {}, const [
+        TmuxAutostart(name: 'api', path: '/first'),
+        TmuxAutostart(name: 'api', path: '/second'),
+      ]);
+      expect(plan, hasLength(1));
+      expect(plan.single.path, '/first');
+    });
+
+    test('blank names drop out', () {
+      expect(
+          TmuxAutostart.ensurePlan(const {}, const [
+            TmuxAutostart(name: '  '),
+            TmuxAutostart(name: ''),
+          ]),
+          isEmpty);
+    });
+
+    test('names are compared trimmed', () {
+      final plan = TmuxAutostart.ensurePlan({'api'}, const [
+        TmuxAutostart(name: '  api  '),
+      ]);
+      expect(plan, isEmpty);
+    });
+  });
+
+  group('TmuxAutostart.createCommand', () {
+    test('creates detached at the start directory', () {
+      expect(const TmuxAutostart(name: 'api', path: '/srv/api').createCommand(),
+          "tmux new-session -d -s 'api' -c '/srv/api'");
+    });
+
+    test('without a path it omits -c entirely', () {
+      expect(const TmuxAutostart(name: 'api').createCommand(),
+          "tmux new-session -d -s 'api'");
+    });
+
+    test('names and paths with quotes are shell-quoted', () {
+      final cmd = const TmuxAutostart(name: "it's", path: "/a b/c").createCommand();
+      expect(cmd, contains(r"-s 'it'\''s'"));
+      expect(cmd, contains("-c '/a b/c'"));
+    });
+  });
 }

@@ -2879,6 +2879,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       groupId: profile.groupId,
       tunnels: profile.tunnels,
       useTmux: profile.useTmux,
+      discoverTmuxSessions: profile.discoverTmuxSessions,
+      tmuxAutostart: profile.tmuxAutostart,
       useDeviceKey: profile.useDeviceKey,
     );
     await saveProfile(copy);
@@ -3342,10 +3344,24 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         // drop re-attaches to whatever kept running on the server (e.g. an AI
         // agent mid-task). Falls back to a plain login shell — with a visible
         // notice — when the server has no tmux.
-        session.attachedTmuxSession = profile.tmuxSessionName;
+        //
+        // With auto-start entries the tab joins the first of them instead of
+        // the profile's default session — the named workspace is the point of
+        // the feature — creating it in place (with its start directory) if it
+        // is not there yet.
+        final first = profile.tmuxAutostart.isEmpty
+            ? null
+            : profile.tmuxAutostart.first;
+        final tmuxName = first?.name ?? profile.tmuxSessionName;
+        final attachCmd = StringBuffer(
+            'exec tmux new-session -A -s ${TmuxSession.shQuote(tmuxName)}');
+        if (first != null && first.path.isNotEmpty) {
+          attachCmd.write(' -c ${TmuxSession.shQuote(first.path)}');
+        }
+        session.attachedTmuxSession = tmuxName;
         session.sshSession = await session.sshClient!.execute(
           'command -v tmux >/dev/null 2>&1 '
-          "&& exec tmux new-session -A -s '${profile.tmuxSessionName}' "
+          '&& $attachCmd '
           '|| { echo "[KAMMEL] tmux no está instalado en el servidor; abriendo shell normal."; '
               'exec "\${SHELL:-sh}" -l; }',
           pty: pty,
@@ -3390,6 +3406,10 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       // The server's own tmux sessions, for the session switcher. Everything
       // inside is gated on the profile's opt-in flag — see [refreshTmuxSessions].
       unawaited(refreshTmuxSessions(session));
+
+      // Sessions the profile wants to exist, created when missing — idempotent
+      // across reconnects, see [TmuxAutostart.ensurePlan].
+      unawaited(_ensureTmuxAutostart(session, profile));
 
       // Separate batched writers for stdout/stderr: each keeps its own UTF-8
       // decoder so a multi-byte glyph split across packets is reassembled
@@ -3616,6 +3636,50 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       sessionName: tmux.name,
       attachedTmuxSession: tmux.name,
     );
+  }
+
+  /// Creates, on [session]'s server, the tmux sessions the profile asked for
+  /// and that don't exist yet (see [TmuxAutostart.ensurePlan]). Best-effort:
+  /// one exec channel per creation, every failure reported into the terminal
+  /// and none of them able to fail the connection itself.
+  Future<void> _ensureTmuxAutostart(
+      TerminalSession session, ConnectionProfile profile) async {
+    final wanted = profile.tmuxAutostart;
+    final client = session.sshClient;
+    if (wanted.isEmpty || client == null) return;
+    if (session.connectionStatus != ConnectionStatus.remote) return;
+    try {
+      // One probe doubles as the existence check and the "is tmux there at
+      // all" check: exit 127 means the server has no tmux binary.
+      final probe = await client.execute(TmuxSession.listCommand());
+      final out = await utf8.decoder.bind(probe.stdout.cast<List<int>>()).join();
+      await probe.done;
+      if (probe.exitCode == 127) {
+        // The useTmux path announces this itself; for an autostart-only setup
+        // say it once here, where the user configured it.
+        session.terminal.write(
+            '\r\n[KAMMEL] tmux no está instalado en el servidor; no se crearon las sesiones automáticas.\r\n');
+        return;
+      }
+      final existing =
+          TmuxSession.parseLs(out).map((t) => t.name).toSet();
+      for (final entry in TmuxAutostart.ensurePlan(existing, wanted)) {
+        final s = await client.execute(entry.createCommand());
+        await utf8.decoder.bind(s.stderr.cast<List<int>>()).join();
+        await s.done;
+        if (s.exitCode == 0) {
+          session.terminal.write(
+              '\r\n[KAMMEL] tmux: sesión \'${entry.name}\' creada${entry.path.isEmpty ? '' : ' en ${entry.path}' }.\r\n');
+        } else {
+          // A name tmux rejects (it forbids `:` and `.`) lands here — say so
+          // rather than silently not delivering a session the user asked for.
+          session.terminal.write(
+              '\r\n[KAMMEL] tmux: no se pudo crear la sesión \'${entry.name}\'.\r\n');
+        }
+      }
+    } catch (e) {
+      debugPrint('tmux autostart failed for ${profile.name}: $e');
+    }
   }
 
   // Disconnect the active session: tear down its SSH connection, close its tab,

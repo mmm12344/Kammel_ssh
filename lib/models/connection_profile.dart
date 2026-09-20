@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'ssh_tunnel.dart';
+import 'tmux_session.dart';
 
 /// Legacy shape of a local port-forward (`ssh -L bindPort:remoteHost:remotePort`)
 /// as persisted by app versions before [SshTunnel] existed.
@@ -83,6 +84,12 @@ class ConnectionProfile {
   /// attach. Without it the app only ever lists sessions it opened itself.
   final bool discoverTmuxSessions;
 
+  /// Tmux sessions created on this server at connect time when missing
+  /// ([TmuxAutostart.ensurePlan] makes it idempotent: a session that already
+  /// exists is never re-created). With [useTmux] on, the tab attaches to the
+  /// first entry instead of the profile's default session.
+  final List<TmuxAutostart> tmuxAutostart;
+
   /// Authenticate with the phone's own ed25519 key (see DeviceKey) in addition
   /// to any per-profile key/password. Requires the device public key in the
   /// server's `authorized_keys`.
@@ -121,6 +128,7 @@ class ConnectionProfile {
     this.tunnels = const [],
     this.useTmux = false,
     this.discoverTmuxSessions = false,
+    this.tmuxAutostart = const [],
     this.useDeviceKey = false,
     this.colorHex,
     this.isProduction = false,
@@ -160,6 +168,7 @@ class ConnectionProfile {
           .toList(),
       'useTmux': useTmux,
       'discoverTmuxSessions': discoverTmuxSessions,
+      'tmuxAutostart': tmuxAutostart.map((t) => t.toMap()).toList(),
       'useDeviceKey': useDeviceKey,
       'colorHex': colorHex,
       'isProduction': isProduction,
@@ -195,6 +204,7 @@ class ConnectionProfile {
     bool clearGroupId = false,
     bool? useTmux,
     bool? discoverTmuxSessions,
+    List<TmuxAutostart>? tmuxAutostart,
     bool? useDeviceKey,
     String? colorHex,
     bool clearColor = false,
@@ -215,6 +225,7 @@ class ConnectionProfile {
       tunnels: tunnels ?? this.tunnels,
       useTmux: useTmux ?? this.useTmux,
       discoverTmuxSessions: discoverTmuxSessions ?? this.discoverTmuxSessions,
+      tmuxAutostart: tmuxAutostart ?? this.tmuxAutostart,
       useDeviceKey: useDeviceKey ?? this.useDeviceKey,
       colorHex: clearColor ? null : (colorHex ?? this.colorHex),
       isProduction: isProduction ?? this.isProduction,
@@ -237,6 +248,9 @@ class ConnectionProfile {
       tunnels: _tunnelsFromMap(map),
       useTmux: map['useTmux'] ?? false,
       discoverTmuxSessions: map['discoverTmuxSessions'] ?? false,
+      tmuxAutostart: ((map['tmuxAutostart'] as List?) ?? const [])
+          .map((e) => TmuxAutostart.fromMap(Map<String, dynamic>.from(e)))
+          .toList(),
       useDeviceKey: map['useDeviceKey'] ?? false,
       colorHex: (map['colorHex'] as String?)?.trim().isEmpty ?? true
           ? null

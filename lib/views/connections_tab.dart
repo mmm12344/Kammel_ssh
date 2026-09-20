@@ -6,6 +6,7 @@ import '../models/connection_group.dart';
 import '../models/connection_profile.dart';
 import '../models/jump_chain.dart';
 import '../models/ssh_tunnel.dart';
+import '../models/tmux_session.dart';
 import '../providers/app_state.dart';
 import '../theme/app_theme.dart';
 import '../widgets/adaptive_sheet.dart';
@@ -897,6 +898,8 @@ class _ConnectionsTabState extends State<ConnectionsTab> {
         TextEditingController(text: profile?.privateKey ?? '');
     final commandController = TextEditingController();
     final tunnels = List<SshTunnel>.from(profile?.tunnels ?? const []);
+    final autostart =
+        List<TmuxAutostart>.from(profile?.tmuxAutostart ?? const []);
     var useTmux = profile?.useTmux ?? false;
     var discoverTmux = profile?.discoverTmuxSessions ?? false;
     var useDeviceKey = profile?.useDeviceKey ?? false;
@@ -933,6 +936,7 @@ class _ConnectionsTabState extends State<ConnectionsTab> {
                 tunnels: tunnels,
                 useTmux: useTmux,
                 discoverTmuxSessions: discoverTmux,
+                tmuxAutostart: autostart,
                 useDeviceKey: useDeviceKey,
                 colorHex: colorHex,
                 isProduction: isProduction,
@@ -1103,6 +1107,42 @@ class _ConnectionsTabState extends State<ConnectionsTab> {
                         'Muestra en la barra de sesiones las sesiones tmux que ya existen en el servidor, aunque no las haya abierto la app; toca una para adjuntarte a ella.'),
                     value: discoverTmux,
                     onChanged: (v) => setSheetState(() => discoverTmux = v),
+                  ),
+                  const SizedBox(height: 8),
+
+                  // ---- Auto-started tmux sessions --------------------------
+                  Text(tr('SESIONES TMUX AUTOMÁTICAS'),
+                      style: AppText.label(9,
+                          color: AppColors.muted, spacing: 1.4)),
+                  const SizedBox(height: 8),
+                  Text(
+                    tr('Al conectar, crea en el servidor las sesiones que falten con este nombre y ruta; las que ya existan se dejan tal cual. Con la sesión persistente activa, la primera de la lista es la que se abre.'),
+                    style: AppText.body(11, color: AppColors.muted),
+                  ),
+                  const SizedBox(height: 10),
+                  for (int i = 0; i < autostart.length; i++)
+                    _autostartRow(
+                      sheetCtx,
+                      autostart[i],
+                      onEdit: () async {
+                        final edited = await _showAutostartDialog(sheetCtx,
+                            initial: autostart[i]);
+                        if (edited != null) {
+                          setSheetState(() => autostart[i] = edited);
+                        }
+                      },
+                      onRemove: () => setSheetState(() => autostart.removeAt(i)),
+                    ),
+                  GhostButton(
+                    label: tr('Añadir sesión tmux'),
+                    icon: Icons.add,
+                    dense: true,
+                    onPressed: () async {
+                      final created = await _showAutostartDialog(sheetCtx);
+                      if (created != null) {
+                        setSheetState(() => autostart.add(created));
+                      }
+                    },
                   ),
                   const SizedBox(height: 8),
 
@@ -1500,6 +1540,102 @@ class _ConnectionsTabState extends State<ConnectionsTab> {
         ),
       ),
     );
+  }
+
+  Widget _autostartRow(BuildContext sheetCtx, TmuxAutostart entry,
+      {required VoidCallback onEdit, required VoidCallback onRemove}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: InkWell(
+        onTap: onEdit,
+        child: Row(
+          children: [
+            Icon(Icons.terminal, size: 18, color: AppColors.muted),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(entry.name,
+                      style: AppText.mono(12, color: AppColors.bone)),
+                  if (entry.path.isNotEmpty)
+                    Text(entry.path,
+                        style: AppText.mono(10, color: AppColors.muted),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis),
+                ],
+              ),
+            ),
+            IconTapTarget(
+              icon: Icons.close,
+              label: tr('Quitar sesión tmux'),
+              size: 14,
+              min: 34,
+              color: AppColors.danger,
+              onTap: onRemove,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Asks for the name and start directory of an auto-started tmux session.
+  /// Returns null when cancelled; an empty name is refused, a blank path is
+  /// allowed (tmux's own default start directory).
+  Future<TmuxAutostart?> _showAutostartDialog(BuildContext ctx,
+      {TmuxAutostart? initial}) async {
+    final nameController = TextEditingController(text: initial?.name ?? '');
+    final pathController = TextEditingController(text: initial?.path ?? '');
+    TmuxAutostart? result;
+    await showDialog(
+      context: ctx,
+      builder: (dialogCtx) => AlertDialog(
+        backgroundColor: AppColors.panel,
+        title: Text(
+            initial == null
+                ? tr('Añadir sesión tmux')
+                : tr('Editar sesión tmux'),
+            style: AppText.label(11, color: AppColors.bone, spacing: 1.4)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameController,
+              autofocus: true,
+              decoration:
+                  InputDecoration(labelText: tr('NOMBRE DE LA SESIÓN TMUX')),
+              style: AppText.mono(12),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: pathController,
+              decoration: InputDecoration(labelText: tr('RUTA INICIAL')),
+              style: AppText.mono(12),
+            ),
+          ],
+        ),
+        actions: [
+          GhostButton(
+            label: tr('Cancelar'),
+            dense: true,
+            onPressed: () => Navigator.of(dialogCtx).pop(),
+          ),
+          InvertedButton(
+            label: tr('Guardar'),
+            dense: true,
+            onPressed: () {
+              final name = nameController.text.trim();
+              if (name.isEmpty) return;
+              result = TmuxAutostart(
+                  name: name, path: pathController.text.trim());
+              Navigator.of(dialogCtx).pop();
+            },
+          ),
+        ],
+      ),
+    );
+    return result;
   }
 
   Widget _field(TextEditingController controller, String label,
