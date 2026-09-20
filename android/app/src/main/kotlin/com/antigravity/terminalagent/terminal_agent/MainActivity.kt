@@ -94,6 +94,8 @@ class MainActivity : FlutterFragmentActivity() {
                             call.argument<String>("agent"),
                             call.argument<String>("kind"),
                             call.argument<String>("sessionName"),
+                            actions = call.argument<List<*>>("actions"),
+                            replyLabel = call.argument<String>("replyLabel"),
                         )
                         result.success(true)
                     }
@@ -133,6 +135,18 @@ class MainActivity : FlutterFragmentActivity() {
                     else -> result.notImplemented()
                 }
             }
+
+        // The bridge [AlertReceiver] uses to deliver notification quick
+        // replies and direct replies into the live engine. Nulled again when
+        // the engine detaches (see [cleanUpFlutterEngine]) so a reply arriving
+        // afterwards falls back to launching the app instead of vanishing.
+        AlertBridge.channel =
+            MethodChannel(flutterEngine.dartExecutor.binaryMessenger, notificationsChannelName)
+    }
+
+    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        AlertBridge.channel = null
+        super.cleanUpFlutterEngine(flutterEngine)
     }
 
     private fun startService(action: String) {

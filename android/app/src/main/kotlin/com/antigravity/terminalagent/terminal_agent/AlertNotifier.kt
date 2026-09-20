@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.RemoteInput
 import android.content.Context
 import android.content.Intent
 import android.graphics.BitmapFactory
@@ -30,6 +31,14 @@ object AlertNotifier {
     // channel whose id encodes the level and deleting the previous one. Kind
     // ids match Dart's AlertKind.name; levels match AlertIntensity.name.
     private const val CHANNEL_PREFIX = "kammel_alert"
+
+    // Distinct request code per (session, action), so the PendingIntents of
+    // two sessions — or of the reply slot and a quick key — never overwrite
+    // each other's extras. Quick actions index 0..2; the reply slot is 7.
+    private const val REPLY_CODE = 7
+
+    private fun actionRequestCode(sessionId: String, index: Int): Int =
+        notificationId(sessionId) * 8 + index
 
     private fun channelId(kind: String, level: String) = "${CHANNEL_PREFIX}_${kind}_$level"
 
@@ -146,6 +155,8 @@ object AlertNotifier {
         agent: String?,
         kind: String?,
         sessionName: String? = null,
+        actions: List<*>? = null,
+        replyLabel: String? = null,
     ) {
         val manager =
             context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -183,7 +194,7 @@ object AlertNotifier {
         // expanded BigText shows the on-screen excerpt the Dart side attached.
         val collapsed = body.lineSequence().firstOrNull() ?: body
 
-        val notification = builder
+        builder
             .setContentTitle(title)
             .setContentText(collapsed)
             .setStyle(Notification.BigTextStyle().bigText(body))
@@ -204,7 +215,64 @@ object AlertNotifier {
             .setOnlyAlertOnce(true)
             .setAutoCancel(true)
             .setContentIntent(contentIntent)
-            .build()
+
+        // Quick replies ("y" / "n" / Enter): broadcast to [AlertReceiver],
+        // which forwards to the still-alive Flutter engine over [AlertBridge].
+        // Only built when Dart sent them — question alerts on non-production
+        // machines — so an action can never fire into a machine that is
+        // supposed to confirm first.
+        actions?.forEachIndexed { index, any ->
+            val a = any as? Map<*, *> ?: return@forEachIndexed
+            val label = a["label"] as? String ?: return@forEachIndexed
+            val inputIntent = Intent(context, AlertReceiver::class.java).apply {
+                action = AlertReceiver.ACTION_AGENT_INPUT
+                putExtra(EXTRA_SESSION_ID, sessionId)
+                putExtra(AlertReceiver.EXTRA_INPUT, (a["input"] as? String) ?: "")
+                putExtra(AlertReceiver.EXTRA_SUBMIT, a["submit"] as? Boolean ?: true)
+                putExtra(AlertReceiver.EXTRA_AS_PASTE, a["asPaste"] as? Boolean ?: false)
+            }
+            builder.addAction(
+                Notification.Action.Builder(
+                    R.drawable.ic_notification,
+                    label,
+                    PendingIntent.getBroadcast(
+                        context,
+                        actionRequestCode(sessionId, index),
+                        inputIntent,
+                        pendingFlags(),
+                    ),
+                ).build(),
+            )
+        }
+
+        // The free-text reply slot: the keyboard's RemoteInput hands the text
+        // to [AlertReceiver], forwarded as a paste + Enter — the same shape
+        // the agents dashboard types with.
+        if (replyLabel != null) {
+            val remoteInput = RemoteInput.Builder(AlertReceiver.REMOTE_INPUT_KEY)
+                .setLabel(replyLabel)
+                .build()
+            val replyIntent = Intent(context, AlertReceiver::class.java).apply {
+                action = AlertReceiver.ACTION_AGENT_INPUT
+                putExtra(EXTRA_SESSION_ID, sessionId)
+                putExtra(AlertReceiver.EXTRA_SUBMIT, true)
+                putExtra(AlertReceiver.EXTRA_AS_PASTE, true)
+            }
+            builder.addAction(
+                Notification.Action.Builder(
+                    R.drawable.ic_notification,
+                    replyLabel,
+                    PendingIntent.getBroadcast(
+                        context,
+                        actionRequestCode(sessionId, REPLY_CODE),
+                        replyIntent,
+                        pendingFlags(),
+                    ),
+                ).addRemoteInput(remoteInput).build(),
+            )
+        }
+
+        val notification = builder.build()
 
         manager.notify(notificationId(sessionId), notification)
         maybePostGroupSummary(context, manager)

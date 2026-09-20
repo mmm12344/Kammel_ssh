@@ -925,6 +925,7 @@ const Map<String, String> zhStrings = {
   'SESIONES': '会话',
   'SESIÓN CAÍDA': '会话已断开',
   'SESIÓN PERSISTENTE (TMUX)': '持久会话（TMUX）',
+  'RESPONDER': '回复',
   'DESCUBRIR SESIONES TMUX': '发现 TMUX 会话',
   'Muestra en la barra de sesiones las sesiones tmux que ya existen en el servidor, aunque no las haya abierto la app; toca una para adjuntarte a ella.':
       '在会话栏中显示服务器上已存在的 tmux 会话（即使是应用之外打开的）；点按即可接入。',

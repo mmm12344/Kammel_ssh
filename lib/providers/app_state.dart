@@ -1434,6 +1434,16 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       session.rawWatchSignature = _rawScreenSignature(session);
       _sessionAlertTimers.remove(session.id)?.cancel();
 
+      // Quick replies ride the notification itself when the answer needs no
+      // judgment call: a question gets y/n/Enter plus the free-text reply
+      // slot, sent through [sendToSession] exactly like the agents dashboard
+      // would. A production machine offers none of it — from the shade there
+      // is no room for the "ENVIAR A PRODUCCIÓN" confirmation, so the answer
+      // waits for the app.
+      final canReplyInline =
+          alertKind == AlertKind.question &&
+              !(session.activeProfile?.isProduction ?? false);
+
       NotificationService.showAlert(
         sessionId: session.id,
         title: finalTitle,
@@ -1441,6 +1451,29 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         agent: agent?.id,
         kind: alertKind.name,
         sessionName: session.name,
+        actions: canReplyInline
+            ? [
+                {
+                  'label': 'y',
+                  'input': 'y',
+                  'submit': true,
+                  'asPaste': false,
+                },
+                {
+                  'label': 'n',
+                  'input': 'n',
+                  'submit': true,
+                  'asPaste': false,
+                },
+                {
+                  'label': tr('ENTER'),
+                  'input': '',
+                  'submit': true,
+                  'asPaste': false,
+                },
+              ]
+            : null,
+        replyLabel: canReplyInline ? tr('RESPONDER') : null,
       );
     }
     // The badge is set either way: coming back to a marked tab is how the user

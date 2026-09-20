@@ -53,6 +53,8 @@ class NotificationService {
     String? agent,
     String? kind,
     String? sessionName,
+    List<Map<String, Object>>? actions,
+    String? replyLabel,
   }) async {
     if (!Platform.isAndroid) return;
     try {
@@ -63,11 +65,40 @@ class NotificationService {
         'agent': agent,
         'kind': kind,
         'sessionName': sessionName,
+        if (actions != null && actions.isNotEmpty) 'actions': actions,
+        'replyLabel': ?replyLabel,
       });
     } catch (_) {
       // Notifications blocked or native side unavailable — the in-app badge
       // still marks the session, so there's nothing actionable here.
     }
+  }
+
+  /// The notification's direct reply and quick actions, coming back in.
+  ///
+  /// An action button or a typed reply reaches [AlertReceiver] as a
+  /// broadcast; the receiver forwards it over this channel as `agentInput`
+  /// when the process — and with the foreground service, the SSH session —
+  /// is still alive. [handler] writes into that session via [AppState]
+  /// (same [AppState.sendToSession] path as the agents dashboard, so it
+  /// clears the badge and cancels the alert) and returns whether the
+  /// session was found and live; a false result would leave the native
+  /// fallback in place. Registered once at startup, before any session
+  /// exists — a reply can only arrive for a session that is connected.
+  static void setAgentInputHandler(
+      bool Function(String sessionId, String input,
+              {bool submit, bool asPaste})
+          handler) {
+    _channel.setMethodCallHandler((call) async {
+      if (call.method != 'agentInput') return null;
+      final args = call.arguments;
+      return handler(
+        args is Map ? '${args['sessionId'] ?? ''}' : '',
+        args is Map ? '${args['input'] ?? ''}' : '',
+        submit: args is Map ? args['submit'] as bool? ?? true : true,
+        asPaste: args is Map ? args['asPaste'] as bool? ?? false : false,
+      );
+    });
   }
 
   /// Dismisses the alert for a single session — used when that session starts
