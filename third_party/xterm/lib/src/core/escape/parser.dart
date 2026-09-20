@@ -979,7 +979,7 @@ class EscapeParser {
         }
       case 66:
         return handler.setAppKeypadMode(enabled);
-      // Patched for KALA: these four are independent switches and a program
+      // Patched for Kammel: these four are independent switches and a program
       // may turn one off while leaving another on — `CSI ? 1003 l` after
       // `CSI ? 1000 h` still leaves wheel reporting enabled everywhere else.
       // Mapping every "off" onto MouseMode.none silently stopped reporting the

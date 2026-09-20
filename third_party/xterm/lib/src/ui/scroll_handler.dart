@@ -9,7 +9,7 @@ import 'package:xterm/core.dart';
 /// scroll gestures are converted to escape sequences based on the current
 /// report mode declared by the application.
 ///
-/// Patched for KALA: upstream wrapped the terminal in a second [Scrollable]
+/// Patched for Kammel: upstream wrapped the terminal in a second [Scrollable]
 /// ([InfiniteScrollView]) whose offset changes were translated into wheel
 /// events. That nested scrollable swallowed the drag before xterm's own
 /// recognisers could see it, so a long press could not extend a selection.

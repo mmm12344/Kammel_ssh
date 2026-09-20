@@ -19,7 +19,7 @@ enum TerminalMouseButton {
   /// Buttons 4-7 (the wheel axes) are reported with bit 6 set and the *low*
   /// two bits holding the button minus four — so wheel up is 64, not 64 + 4.
   ///
-  /// Patched for KALA: upstream reported 64 + 4 … 64 + 7, which sets bit 2 —
+  /// Patched for Kammel: upstream reported 64 + 4 … 64 + 7, which sets bit 2 —
   /// the Shift modifier. Every wheel event therefore arrived at the remote as
   /// Shift+Wheel, which tmux leaves unbound (`S-WheelUpPane` has no default
   /// binding), so scrolling a tmux session or a TUI agent did nothing at all.
