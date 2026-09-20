@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/connection_profile.dart';
 import '../models/db_connection_profile.dart';
 import '../l10n/l10n.dart';
+import 'secure_store.dart';
 
 /// Lifecycle of the server console: pick a server → connecting → managing.
 enum ServerPhase { pickServer, connecting, ready, error }
@@ -138,8 +139,27 @@ class DockerDfRow {
   });
 }
 
-class RemoteCmdResult {
-  final String stdout, stderr;
+/// Quotes an SQL identifier (table or column name) for the engine, after
+/// making sure it is *just* an identifier.
+///
+/// Names reaching the row builders come from `information_schema` listings —
+/// that is, from the database itself — so a hostile table name on a shared
+/// server (`x"; DROP TABLE users; --`) would otherwise ride its own way into
+/// a query the app then executes, backtick/quote doubling notwithstanding.
+/// Anything that is not a plain identifier (letters, digits, `_`, `$`; never
+/// starting with a digit) is refused with [FormatException] instead of being
+/// escaped, and the caller surfaces that as the panel's error text.
+String sqlIdent(String name, {required bool postgres}) {
+  if (!RegExp(r'^[A-Za-z_][A-Za-z0-9_$]*$').hasMatch(name)) {
+    throw FormatException('not a plain SQL identifier: "$name"');
+  }
+  return postgres ? '"$name"' : '`$name`';
+}
+
+/// Escapes [s] for an SQL single-quoted string literal ('' doubling).
+String sqlString(String s) => "'${s.replaceAll("'", "''")}'";
+
+class RemoteCmdResult {  final String stdout, stderr;
   final int? exitCode;
   const RemoteCmdResult(this.stdout, this.stderr, this.exitCode);
   bool get ok => exitCode == 0;
@@ -1071,14 +1091,50 @@ fi
 
   // ---- Database section methods ----
 
+  /// Loads the DB profiles attached to [sshProfileId] and resolves their
+  /// passwords from secure storage.
+  ///
+  /// Plain prefs hold the profile *without* its password ([DbConnectionProfile.toJsonPublic]),
+  /// the same split as SSH profiles — which is what this load also migrates:
+  /// a profile saved by an older build still carries its password inline, and
+  /// the first load moves it into the secure store and rewrites prefs without
+  /// it. Until the move succeeds the inline value keeps working, so a crash
+  /// mid-migration cannot lose a credential.
   Future<void> loadDbProfiles(String sshProfileId) async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final list = prefs.getStringList('db_profiles') ?? [];
-      dbProfiles = list
-          .map((item) => DbConnectionProfile.fromJson(item))
-          .where((p) => p.sshProfileId == sshProfileId)
-          .toList();
+      final rewritten = <String>[];
+      var migratedAny = false;
+      final resolved = <DbConnectionProfile>[];
+      for (final item in list) {
+        final map = json.decode(item) as Map<String, dynamic>;
+        var entry = item;
+        // Migration: a profile saved by an older build carries its password
+        // inline. Move it to secure storage and rewrite the prefs entry
+        // without it. Idempotent — the move only happens while an inline
+        // value is still there, so a crash mid-migration retries next load
+        // with the credential intact.
+        final inline = (map['password'] as String?) ?? '';
+        if (inline.isNotEmpty) {
+          final id = (map['id'] as String?) ?? '';
+          if (id.isNotEmpty) {
+            await SecureStore.instance.writeDbPassword(id, inline);
+            entry =
+                json.encode(DbConnectionProfile.fromMap(map).toMapPublic());
+            migratedAny = true;
+          }
+        }
+        rewritten.add(entry);
+        final p = DbConnectionProfile.fromMap(json.decode(entry));
+        final stored = await SecureStore.instance.readDbPassword(p.id);
+        resolved.add(stored == null ? p : p.copyWith(password: stored));
+      }
+      if (migratedAny) {
+        await prefs.setStringList('db_profiles', rewritten);
+      }
+      dbProfiles =
+          resolved.where((p) => p.sshProfileId == sshProfileId).toList();
     } catch (e) {
       debugPrint('Error loading db profiles: $e');
       dbProfiles = [];
@@ -1086,14 +1142,17 @@ fi
     notifyListeners();
   }
 
+  /// Persists [profile]: the password to secure storage, the rest to prefs.
   Future<void> saveDbProfile(DbConnectionProfile profile) async {
     try {
+      await SecureStore.instance.writeDbPassword(profile.id, profile.password);
       final prefs = await SharedPreferences.getInstance();
       final list = prefs.getStringList('db_profiles') ?? [];
       final profiles = list.map((item) => DbConnectionProfile.fromJson(item)).toList();
       profiles.removeWhere((p) => p.id == profile.id);
       profiles.add(profile);
-      await prefs.setStringList('db_profiles', profiles.map((p) => p.toJson()).toList());
+      await prefs.setStringList(
+          'db_profiles', profiles.map((p) => p.toJsonPublic()).toList());
       dbProfiles = profiles.where((p) => p.sshProfileId == profile.sshProfileId).toList();
       notifyListeners();
     } catch (e) {
@@ -1103,11 +1162,13 @@ fi
 
   Future<void> deleteDbProfile(String profileId) async {
     try {
+      await SecureStore.instance.writeDbPassword(profileId, null);
       final prefs = await SharedPreferences.getInstance();
       final list = prefs.getStringList('db_profiles') ?? [];
       final profiles = list.map((item) => DbConnectionProfile.fromJson(item)).toList();
       profiles.removeWhere((p) => p.id == profileId);
-      await prefs.setStringList('db_profiles', profiles.map((p) => p.toJson()).toList());
+      await prefs.setStringList(
+          'db_profiles', profiles.map((p) => p.toJsonPublic()).toList());
       if (profile != null) {
         dbProfiles = profiles.where((p) => p.sshProfileId == profile!.id).toList();
       }
@@ -1347,7 +1408,7 @@ fi
               ON kcu.constraint_name = tc.constraint_name 
               AND kcu.table_schema = tc.table_schema 
               AND tc.constraint_type = 'PRIMARY KEY'
-          WHERE c.table_name = '$tableName' AND c.table_schema = 'public'
+          WHERE c.table_name = ${sqlString(tableName)} AND c.table_schema = 'public'
           ORDER BY c.ordinal_position;
         """;
         final colWrapped = "SELECT json_agg(t) FROM ($colQuery) t;";
@@ -1369,7 +1430,8 @@ fi
         }
         
         // 2. Fetch Rows
-        final rowQuery = "SELECT * FROM \"$tableName\" LIMIT 100;";
+        final rowQuery =
+            "SELECT * FROM ${sqlIdent(tableName, postgres: true)} LIMIT 100;";
         final rowWrapped = "SELECT json_agg(t) FROM ($rowQuery) t;";
         final rowRes = await _executeSqlPostgres(rowWrapped, dbProfile);
         if (rowRes.ok) {
@@ -1394,7 +1456,7 @@ fi
               c.column_default,
               c.column_key = 'PRI' AS is_primary
           FROM information_schema.columns c
-          WHERE c.table_name = '$tableName' AND c.table_schema = DATABASE() 
+          WHERE c.table_name = ${sqlString(tableName)} AND c.table_schema = DATABASE()
           ORDER BY c.ordinal_position;
         """;
         final colRes = await _executeSqlMysql(colQuery, dbProfile);
@@ -1425,7 +1487,9 @@ fi
         
         // MySQL Rows
         final colNames = dbColumns.map((c) => c['column_name'] as String).toList();
-        final rowRes = await _executeSqlMysql("SELECT * FROM `$tableName` LIMIT 100;", dbProfile);
+        final rowRes = await _executeSqlMysql(
+            "SELECT * FROM ${sqlIdent(tableName, postgres: false)} LIMIT 100;",
+            dbProfile);
         if (rowRes.ok) {
           dbRows = _parseTsv(rowRes.stdout, colNames);
         } else {
@@ -1481,18 +1545,18 @@ fi
     notifyListeners();
     
     try {
-      final columns = data.keys.toList();
+      final postgres = dbProfile.engine == 'postgres';
+      final columns = data.keys.map((c) => sqlIdent(c, postgres: postgres)).toList();
       final values = data.values.map((v) {
         if (v == null) return 'NULL';
-        final s = v.toString().replaceAll("'", "''");
-        return "'$s'";
+        return sqlString(v.toString());
       }).toList();
-      
+
       String sql;
-      if (dbProfile.engine == 'postgres') {
-        sql = 'INSERT INTO "$tableName" (${columns.map((c) => '"$c"').join(', ')}) VALUES (${values.join(', ')});';
+      if (postgres) {
+        sql = 'INSERT INTO ${sqlIdent(tableName, postgres: true)} (${columns.join(', ')}) VALUES (${values.join(', ')});';
       } else {
-        sql = 'INSERT INTO `$tableName` (${columns.map((c) => '`$c`').join(', ')}) VALUES (${values.join(', ')});';
+        sql = 'INSERT INTO ${sqlIdent(tableName, postgres: false)} (${columns.join(', ')}) VALUES (${values.join(', ')});';
       }
       
       RemoteCmdResult res;
@@ -1527,21 +1591,22 @@ fi
     notifyListeners();
     
     try {
+      final postgres = dbProfile.engine == 'postgres';
       final List<String> whereClauses = [];
       keys.forEach((col, val) {
+        final quoted = sqlIdent(col, postgres: postgres);
         if (val == null) {
-          whereClauses.add(dbProfile.engine == 'postgres' ? '"$col" IS NULL' : '`$col` IS NULL');
+          whereClauses.add('$quoted IS NULL');
         } else {
-          final s = val.toString().replaceAll("'", "''");
-          whereClauses.add(dbProfile.engine == 'postgres' ? '"$col" = \'$s\'' : '`$col` = \'$s\'');
+          whereClauses.add('$quoted = ${sqlString(val.toString())}');
         }
       });
-      
+
       String sql;
-      if (dbProfile.engine == 'postgres') {
-        sql = 'DELETE FROM "$tableName" WHERE ${whereClauses.join(' AND ')};';
+      if (postgres) {
+        sql = 'DELETE FROM ${sqlIdent(tableName, postgres: true)} WHERE ${whereClauses.join(' AND ')};';
       } else {
-        sql = 'DELETE FROM `$tableName` WHERE ${whereClauses.join(' AND ')};';
+        sql = 'DELETE FROM ${sqlIdent(tableName, postgres: false)} WHERE ${whereClauses.join(' AND ')};';
       }
       
       RemoteCmdResult res;
@@ -1574,6 +1639,14 @@ fi
   /// process directly.
   String _shQuote(String s) => "'${s.replaceAll("'", "'\\''")}'";
 
+  /// Both engines take their password through the *environment* of the client
+  /// process (`PGPASSWORD` / `MYSQL_PWD`), never through its command line: a
+  /// `-pSECRET` argv sits in `/proc/<pid>/cmdline`, readable by every user on
+  /// the box via `ps` for as long as the query runs, while a process
+  /// environment is readable only by its owner (and root). The wrapping
+  /// command line (`env VAR=…`, `docker exec -e VAR=…`) does flash the value
+  /// in `ps` for the instant it takes to spawn the client — the long-lived
+  /// exposure is the one this removes.
   Future<RemoteCmdResult> _executeSqlPostgres(String sql, DbConnectionProfile dbProfile) async {
     if (dbProfile.dockerContainer != null) {
       return runDocker(
@@ -1601,11 +1674,12 @@ fi
   Future<RemoteCmdResult> _executeSqlMysql(String sql, DbConnectionProfile dbProfile) async {
     if (dbProfile.dockerContainer != null) {
       return runDocker(
-          "exec -i ${_shQuote(dbProfile.dockerContainer!)} mysql -u${_shQuote(dbProfile.username)} -p${_shQuote(dbProfile.password)} "
+          "exec -i -e MYSQL_PWD=${_shQuote(dbProfile.password)} ${_shQuote(dbProfile.dockerContainer!)} "
+          "mysql -u${_shQuote(dbProfile.username)} "
           "${_shQuote(dbProfile.databaseName)} -h localhost -P ${dbProfile.port} -s -N -e ${_shQuote(sql)}");
     } else {
       return _run(
-          "mysql -u${_shQuote(dbProfile.username)} -p${_shQuote(dbProfile.password)} -h ${_shQuote(dbProfile.host)} "
+          "env MYSQL_PWD=${_shQuote(dbProfile.password)} mysql -u${_shQuote(dbProfile.username)} -h ${_shQuote(dbProfile.host)} "
           "-P ${dbProfile.port} ${_shQuote(dbProfile.databaseName)} -s -N -e ${_shQuote(sql)}");
     }
   }
@@ -1613,11 +1687,12 @@ fi
   Future<RemoteCmdResult> _executeSqlMysqlRaw(String sql, DbConnectionProfile dbProfile) async {
     if (dbProfile.dockerContainer != null) {
       return runDocker(
-          "exec -i ${_shQuote(dbProfile.dockerContainer!)} mysql -u${_shQuote(dbProfile.username)} -p${_shQuote(dbProfile.password)} "
+          "exec -i -e MYSQL_PWD=${_shQuote(dbProfile.password)} ${_shQuote(dbProfile.dockerContainer!)} "
+          "mysql -u${_shQuote(dbProfile.username)} "
           "${_shQuote(dbProfile.databaseName)} -h localhost -P ${dbProfile.port} -t -e ${_shQuote(sql)}");
     } else {
       return _run(
-          "mysql -u${_shQuote(dbProfile.username)} -p${_shQuote(dbProfile.password)} -h ${_shQuote(dbProfile.host)} "
+          "env MYSQL_PWD=${_shQuote(dbProfile.password)} mysql -u${_shQuote(dbProfile.username)} -h ${_shQuote(dbProfile.host)} "
           "-P ${dbProfile.port} ${_shQuote(dbProfile.databaseName)} -t -e ${_shQuote(sql)}");
     }
   }

@@ -52,7 +52,33 @@ class DbConnectionProfile {
         dockerContainer: map['dockerContainer'],
       );
 
+  /// The password is the one field prefs never hold, so a load resolves it
+  /// from secure storage and reattaches it here (null keeps the existing).
+  DbConnectionProfile copyWith({String? password}) => DbConnectionProfile(
+        id: id,
+        sshProfileId: sshProfileId,
+        name: name,
+        engine: engine,
+        host: host,
+        port: port,
+        username: username,
+        password: password ?? this.password,
+        databaseName: databaseName,
+        dockerContainer: dockerContainer,
+      );
+
   String toJson() => json.encode(toMap());
+
+  /// Same as [toMap] but without the secret ([password]). This is the shape
+  /// that belongs in plain shared_preferences and in backups — the password
+  /// itself lives in secure storage under `dbpw_<id>` (see [SecureStore]).
+  Map<String, dynamic> toMapPublic() {
+    final map = toMap();
+    map.remove('password');
+    return map;
+  }
+
+  String toJsonPublic() => json.encode(toMapPublic());
 
   factory DbConnectionProfile.fromJson(String source) =>
       DbConnectionProfile.fromMap(json.decode(source));

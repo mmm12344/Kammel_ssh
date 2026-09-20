@@ -305,11 +305,11 @@ Editable in Personalizar → Agentes (`lib/views/agent_launchers_panel.dart`). M
 
 ### Backup and restore
 
-`lib/services/backup_service.dart` writes one JSON file with every `settings_*` key plus an explicit allow-list (`ssh_profiles`, `connection_groups`, `profile_favorites`, `profile_last_used`, `prompt_snippets`, `explorer_bookmarks`, `known_hosts`, `app_language`).
+`lib/services/backup_service.dart` writes one JSON file with every `settings_*` key plus an explicit allow-list (`ssh_profiles`, `db_profiles`, `connection_groups`, `profile_favorites`, `profile_last_used`, `prompt_snippets`, `explorer_bookmarks`, `known_hosts`, `app_language`).
 
 - `_deviceLocalKeys` is excluded in both directions: window geometry and pane splits belong to the screen they were set on, and restoring `settings_app_lock_enabled` onto a device with no enrolled biometric turns a restore into a lockout.
 - Restores **merge** (a key in the file replaces the current one; anything else is kept) and the allow-list is enforced on the way *in* too, so a crafted file can't write arbitrary prefs.
-- Secrets are opt-in and produce a plaintext file holding every credential the user owns — the toggle says so in words.
+- Secrets are opt-in and produce a plaintext file holding every credential the user owns — the toggle says so in words. Both families are collected: SSH secrets under the `secrets` envelope key, server-console DB passwords under `dbSecrets` (they live in SecureStore under `dbpw_<id>`, separate from the SSH prefixes; prefs never hold them — `DbConnectionProfile.toJsonPublic` is the persisted shape, and legacy inline passwords are migrated to the store on the first `loadDbProfiles`).
 - Afterwards the caller must call `AppState.reloadFromDisk()`; live sessions are deliberately untouched.
 
 ### Session restore

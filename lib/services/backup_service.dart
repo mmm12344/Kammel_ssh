@@ -28,6 +28,7 @@ class BackupService {
   /// Keys copied verbatim. Everything the user *chose* is in here.
   static const List<String> _explicitKeys = [
     'ssh_profiles',
+    'db_profiles',
     'connection_groups',
     'profile_favorites',
     'profile_last_used',
@@ -100,8 +101,30 @@ class BackupService {
 
     if (includeSecrets) {
       envelope['secrets'] = await _collectSecrets(prefs);
+      envelope['dbSecrets'] = await _collectDbSecrets(prefs);
     }
     return envelope;
+  }
+
+  /// Reads the server console's DB profile passwords out of secure storage,
+  /// keyed by DB profile id. Kept separate from [_collectSecrets] so a restore
+  /// can put each family back under its own key prefix.
+  static Future<Map<String, dynamic>> _collectDbSecrets(
+      SharedPreferences prefs) async {
+    final out = <String, dynamic>{};
+    for (final raw in prefs.getStringList('db_profiles') ?? const <String>[]) {
+      String? id;
+      try {
+        id = (json.decode(raw) as Map<String, dynamic>)['id'] as String?;
+      } catch (_) {
+        continue;
+      }
+      if (id == null || id.isEmpty) continue;
+      final password = await SecureStore.instance.readDbPassword(id);
+      if (password == null || password.isEmpty) continue;
+      out[id] = password;
+    }
+    return out;
   }
 
   /// Reads every profile's password/private key out of secure storage, keyed by
@@ -255,6 +278,16 @@ class BackupService {
           password: payload['password'] as String?,
           privateKey: payload['privateKey'] as String?,
         );
+        secrets++;
+      }
+    }
+
+    final dbSecretsData = envelope['dbSecrets'];
+    if (dbSecretsData is Map) {
+      for (final entry in dbSecretsData.entries) {
+        final password = entry.value;
+        if (password is! String || password.isEmpty) continue;
+        await SecureStore.instance.writeDbPassword('${entry.key}', password);
         secrets++;
       }
     }
