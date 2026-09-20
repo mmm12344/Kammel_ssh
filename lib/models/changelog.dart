@@ -89,6 +89,30 @@ class ReleaseNote {
 /// shown as if it had shipped.
 const List<ReleaseNote> kChangelog = [
   ReleaseNote(
+    version: '2.10.3',
+    date: '2026-09-20',
+    changes: [
+      ChangeEntry(ChangeKind.added,
+          'Las sesiones tmux del servidor se descubren solas: activa la casilla en el perfil y aparecerán en la barra de sesiones para adjuntarte con un toque, aunque no las haya abierto la app.'),
+      ChangeEntry(ChangeKind.added,
+          'Sesiones tmux automáticas: define nombre y ruta en el perfil y al conectar se crean en el servidor si faltan; con la sesión persistente, la primera es la que se abre.'),
+      ChangeEntry(ChangeKind.added,
+          'Responde al agente desde la propia notificación: y/n/Enter o texto libre, sin abrir la app. Las máquinas de producción siguen pidiendo confirmación dentro de la app.'),
+      ChangeEntry(ChangeKind.fixed,
+          'Al crear una sesión ya no queda un comando sin ejecutar escrito al principio: la app espera a que el prompt esté en pantalla antes de escribir.'),
+      ChangeEntry(ChangeKind.fixed,
+          'Las contraseñas de las bases de datos se guardan cifradas en el almacén seguro (antes iban en texto plano) y los perfiles de base de datos ya se incluyen en las copias de seguridad.'),
+      ChangeEntry(ChangeKind.fixed,
+          'El panel de servidor ya no pone la contraseña de MySQL en la línea de comandos remota, donde cualquier usuario podía verla con ps.'),
+      ChangeEntry(ChangeKind.fixed,
+          'Duplicar un perfil conserva su color, su etiqueta de producción y su salto (ProxyJump): la copia de una máquina tras un bastión ya no queda inutilizable.'),
+      ChangeEntry(ChangeKind.fixed,
+          'Los nombres de tabla y columna que escribe el panel de base de datos en sus consultas se validan, por si la base de datos contiene nombres hostiles.'),
+      ChangeEntry(ChangeKind.fixed,
+          'La migración de atajos que limpiaba duplicados ya no reinicia toda tu lista de teclas: solo elimina las entradas idénticas a las antiguas por defecto.'),
+    ],
+  ),
+  ReleaseNote(
     version: '2.10.2',
     date: '2026-08-27',
     changes: [
