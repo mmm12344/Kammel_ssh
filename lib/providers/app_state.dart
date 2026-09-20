@@ -21,6 +21,7 @@ import '../models/prompt_snippet.dart';
 import '../models/terminal_shortcut.dart';
 import '../models/terminal_key_layer.dart';
 import '../models/touch_pad.dart';
+import '../models/tmux_session.dart';
 import '../widgets/joystick_recognizer.dart';
 import '../services/file_error.dart';
 import '../theme/app_theme.dart';
@@ -137,6 +138,12 @@ class TerminalSession {
   // Last window title the remote program set (OSC 0/2). Many TUI agents put
   // their name here; used to pick the agent badge on alert notifications.
   String? lastTitle;
+  // Name of the server-side tmux session this tab runs inside, when known:
+  // `useTmux` tabs report [ConnectionProfile.tmuxSessionName], tabs attached
+  // to a *discovered* session report its name (see [attachTmuxSession]). The
+  // session switcher uses it to mark which of the server's tmux sessions the
+  // app already has open, and null means the tab runs on a bare shell.
+  String? attachedTmuxSession;
   // ---- Sticky agent identity (see [AppState._noteAgentEvidence]) ----
   // Which agent this session is running, resolved once from the strongest
   // evidence seen so far and then *kept*. It deliberately does not follow
@@ -202,6 +209,7 @@ class TerminalSession {
     required this.terminal,
     required this.connectionStatus,
     this.activeProfile,
+    this.attachedTmuxSession,
     this.sshClient,
     this.sshSession,
     required this.currentPath,
@@ -2448,6 +2456,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     required ConnectionProfile profile,
     String? initialCommand,
     String? sessionName,
+    String? attachedTmuxSession,
     // Restored tabs come back without a connection (see [_restoreSessions]).
     bool connect = true,
   }) {
@@ -2496,6 +2505,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       terminal: terminal,
       connectionStatus: ConnectionStatus.disconnected,
       activeProfile: profile,
+      attachedTmuxSession: attachedTmuxSession,
       currentPath: '',
     );
 
@@ -3335,6 +3345,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         // drop re-attaches to whatever kept running on the server (e.g. an AI
         // agent mid-task). Falls back to a plain login shell — with a visible
         // notice — when the server has no tmux.
+        session.attachedTmuxSession = profile.tmuxSessionName;
         session.sshSession = await session.sshClient!.execute(
           'command -v tmux >/dev/null 2>&1 '
           "&& exec tmux new-session -A -s '${profile.tmuxSessionName}' "
@@ -3343,6 +3354,9 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
           pty: pty,
         );
       } else {
+        // A bare shell is inside no tmux session — matters on a reconnect of
+        // a session object that previously ran under one.
+        session.attachedTmuxSession = null;
         session.sshSession = await session.sshClient!.shell(pty: pty);
       }
 
@@ -3375,6 +3389,10 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         tunnels: profile.tunnels,
         log: (msg) => session.terminal.write('$msg\r\n'),
       );
+
+      // The server's own tmux sessions, for the session switcher. Everything
+      // inside is gated on the profile's opt-in flag — see [refreshTmuxSessions].
+      unawaited(refreshTmuxSessions(session));
 
       // Separate batched writers for stdout/stderr: each keeps its own UTF-8
       // decoder so a multi-byte glyph split across packets is reassembled
@@ -3475,11 +3493,14 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   // Connect to Remote SSH (API exposed to ConnectionsTab)
   Future<void> connectToSSH(ConnectionProfile profile,
-      {String? initialCommand, String? sessionName}) async {
+      {String? initialCommand,
+      String? sessionName,
+      String? attachedTmuxSession}) async {
     createNewSession(
       profile: profile,
       initialCommand: initialCommand,
       sessionName: sessionName,
+      attachedTmuxSession: attachedTmuxSession,
     );
     _setTab(1); // Switch to terminal tab
     notifyListeners();
@@ -3532,6 +3553,72 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       _persistOpenSessions();
       notifyListeners();
     }
+  }
+
+  // ---- tmux session discovery ----------------------------------------------
+  // A profile with `discoverTmuxSessions` lists the server's own tmux sessions
+  // — the ones started outside this app, by hand or from another machine — in
+  // the session switcher, ready to attach. Without it the app only ever lists
+  // sessions it opened itself, and anything already running on the server is
+  // invisible.
+  //
+  // The result is keyed by profile *id*, because the server, not the tab, owns
+  // the answer: two tabs into the same machine share one list, and any of them
+  // can refresh it.
+
+  final Map<String, List<TmuxSession>> _discoveredTmux = {};
+  final Set<String> _tmuxDiscoveryInFlight = {};
+
+  /// The tmux sessions last seen on the server behind [profileId]. Empty
+  /// until the first refresh after connecting.
+  List<TmuxSession> discoveredTmuxFor(String? profileId) =>
+      profileId == null ? const [] : _discoveredTmux[profileId] ?? const [];
+
+  /// True when some open tab already runs inside tmux session [name] on the
+  /// server behind [profileId] — the switcher marks those "already open"
+  /// instead of offering them as if they were unclaimed.
+  bool tmuxSessionIsOpen(String? profileId, String name) => _sessions.any(
+      (s) => s.activeProfile?.id == profileId && s.attachedTmuxSession == name);
+
+  /// Re-reads `tmux ls` on [session]'s server over a one-off exec channel.
+  /// No-op unless the profile opted in and the session is live; concurrent
+  /// refreshes for the same profile collapse into the one in flight.
+  Future<void> refreshTmuxSessions(TerminalSession session) async {
+    final profile = session.activeProfile;
+    final client = session.sshClient;
+    if (profile == null || client == null) return;
+    if (!profile.discoverTmuxSessions) return;
+    if (session.connectionStatus != ConnectionStatus.remote) return;
+    if (!_tmuxDiscoveryInFlight.add(profile.id)) return;
+    try {
+      final s = await client.execute(TmuxSession.listCommand());
+      final results = await Future.wait([
+        utf8.decoder.bind(s.stdout.cast<List<int>>()).join(),
+      ]);
+      await s.done;
+      // Exit status 1 with no output is tmux's "no server running" — an
+      // empty list, not a failure worth surfacing.
+      _discoveredTmux[profile.id] = TmuxSession.parseLs(results[0]);
+      notifyListeners();
+    } catch (e) {
+      debugPrint('tmux discovery failed for ${profile.name}: $e');
+    } finally {
+      _tmuxDiscoveryInFlight.remove(profile.id);
+    }
+  }
+
+  /// Opens a new tab joined to a discovered tmux session. `new-session -A`
+  /// attaches when it still exists and re-creates it otherwise, so joining a
+  /// session that died while the user was reading the list repairs itself
+  /// instead of dead-ending in a "no such session" error.
+  Future<void> attachTmuxSession(
+      ConnectionProfile profile, TmuxSession tmux) async {
+    await connectToSSH(
+      profile,
+      initialCommand: tmux.attachCommand(),
+      sessionName: tmux.name,
+      attachedTmuxSession: tmux.name,
+    );
   }
 
   // Disconnect the active session: tear down its SSH connection, close its tab,

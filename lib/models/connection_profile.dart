@@ -78,6 +78,11 @@ class ConnectionProfile {
   /// agent running inside) survives network drops; reconnecting re-attaches.
   final bool useTmux;
 
+  /// Offer the server's own tmux sessions — the ones started outside this
+  /// app, by hand or by another machine — in the session switcher, ready to
+  /// attach. Without it the app only ever lists sessions it opened itself.
+  final bool discoverTmuxSessions;
+
   /// Authenticate with the phone's own ed25519 key (see DeviceKey) in addition
   /// to any per-profile key/password. Requires the device public key in the
   /// server's `authorized_keys`.
@@ -115,6 +120,7 @@ class ConnectionProfile {
     this.groupId,
     this.tunnels = const [],
     this.useTmux = false,
+    this.discoverTmuxSessions = false,
     this.useDeviceKey = false,
     this.colorHex,
     this.isProduction = false,
@@ -153,6 +159,7 @@ class ConnectionProfile {
               ).toMap())
           .toList(),
       'useTmux': useTmux,
+      'discoverTmuxSessions': discoverTmuxSessions,
       'useDeviceKey': useDeviceKey,
       'colorHex': colorHex,
       'isProduction': isProduction,
@@ -187,6 +194,7 @@ class ConnectionProfile {
     String? groupId,
     bool clearGroupId = false,
     bool? useTmux,
+    bool? discoverTmuxSessions,
     bool? useDeviceKey,
     String? colorHex,
     bool clearColor = false,
@@ -206,6 +214,7 @@ class ConnectionProfile {
       groupId: clearGroupId ? null : (groupId ?? this.groupId),
       tunnels: tunnels ?? this.tunnels,
       useTmux: useTmux ?? this.useTmux,
+      discoverTmuxSessions: discoverTmuxSessions ?? this.discoverTmuxSessions,
       useDeviceKey: useDeviceKey ?? this.useDeviceKey,
       colorHex: clearColor ? null : (colorHex ?? this.colorHex),
       isProduction: isProduction ?? this.isProduction,
@@ -227,6 +236,7 @@ class ConnectionProfile {
       groupId: map['groupId'],
       tunnels: _tunnelsFromMap(map),
       useTmux: map['useTmux'] ?? false,
+      discoverTmuxSessions: map['discoverTmuxSessions'] ?? false,
       useDeviceKey: map['useDeviceKey'] ?? false,
       colorHex: (map['colorHex'] as String?)?.trim().isEmpty ?? true
           ? null

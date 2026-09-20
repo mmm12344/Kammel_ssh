@@ -898,6 +898,7 @@ class _ConnectionsTabState extends State<ConnectionsTab> {
     final commandController = TextEditingController();
     final tunnels = List<SshTunnel>.from(profile?.tunnels ?? const []);
     var useTmux = profile?.useTmux ?? false;
+    var discoverTmux = profile?.discoverTmuxSessions ?? false;
     var useDeviceKey = profile?.useDeviceKey ?? false;
     var colorHex = profile?.colorHex;
     var isProduction = profile?.isProduction ?? false;
@@ -931,6 +932,7 @@ class _ConnectionsTabState extends State<ConnectionsTab> {
                 groupId: groupId,
                 tunnels: tunnels,
                 useTmux: useTmux,
+                discoverTmuxSessions: discoverTmux,
                 useDeviceKey: useDeviceKey,
                 colorHex: colorHex,
                 isProduction: isProduction,
@@ -1093,6 +1095,14 @@ class _ConnectionsTabState extends State<ConnectionsTab> {
                         'Los agentes y procesos siguen corriendo si se corta la conexión; al reconectar vuelves donde estabas. Requiere tmux en el servidor.'),
                     value: useTmux,
                     onChanged: (v) => setSheetState(() => useTmux = v),
+                  ),
+                  const SizedBox(height: 8),
+                  ToggleRow(
+                    label: tr('DESCUBRIR SESIONES TMUX'),
+                    description: tr(
+                        'Muestra en la barra de sesiones las sesiones tmux que ya existen en el servidor, aunque no las haya abierto la app; toca una para adjuntarte a ella.'),
+                    value: discoverTmux,
+                    onChanged: (v) => setSheetState(() => discoverTmux = v),
                   ),
                   const SizedBox(height: 8),
 
