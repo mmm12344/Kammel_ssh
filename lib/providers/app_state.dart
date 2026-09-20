@@ -5613,6 +5613,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       _cleanupSession(session);
     }
     tunnels.dispose();
+    agents.dispose();
     super.dispose();
   }
 }
