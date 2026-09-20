@@ -372,6 +372,9 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, Timer> _sessionCheckTimers = {};
   // Per-session trailing timers that coalesce PTY resizes — see [_scheduleResize].
   final Map<String, Timer> _sessionResizeTimers = {};
+  // Per-session pollers that wait for the login shell's first prompt before
+  // typing the OSC 7 seed — see [_seedCwdReporting].
+  final Map<String, Timer> _cwdSeedTimers = {};
 
   int _activeSessionIndex = -1;
   int get activeSessionIndex => _activeSessionIndex;
@@ -3576,6 +3579,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     _sessionAlertTimers.remove(session.id)?.cancel();
     _sessionCheckTimers.remove(session.id)?.cancel();
     _sessionResizeTimers.remove(session.id)?.cancel();
+    _cwdSeedTimers.remove(session.id)?.cancel();
     _disposeWriters(session);
     tunnels.removeSession(session.id);
     agents.removeSession(session.id);
@@ -5393,15 +5397,42 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     session.terminalCwd = value;
   }
 
+  /// How often [_seedCwdReporting] checks the screen for the shell's prompt,
+  /// and how many checks it will wait before sending regardless (25 × 400ms
+  /// ≈ 10s — past any ordinary login).
+  static const Duration _cwdSeedPollInterval = Duration(milliseconds: 400);
+  static const int _cwdSeedMaxTries = 25;
+
   /// Installs a `PROMPT_COMMAND` that emits OSC 7 on every prompt, so we can
   /// track the shell's real cwd without polling. Best-effort: harmless on
   /// shells that ignore `PROMPT_COMMAND` (they just fall back to the explorer
-  /// path). Sent with a small delay so it lands after the login shell is ready,
-  /// and with a leading space so it's kept out of history when `HISTCONTROL`
-  /// includes `ignorespace`.
+  /// path). Sent with a leading space so it's kept out of history when
+  /// `HISTCONTROL` includes `ignorespace`.
+  ///
+  /// The send waits until the shell's prompt is actually on screen. Typing it
+  /// on a fixed delay (the 900ms this replaced) loses the race on any login
+  /// slow enough that the shell isn't reading yet — heavy rc files, p10k's
+  /// instant prompt, tmux still attaching — and the line then sits visibly at
+  /// the prompt, unexecuted, for the user to backspace away. Polling for the
+  /// prompt makes the write land the moment the shell can consume it; a
+  /// prompt whose shape no classifier recognises falls back to one send after
+  /// [_cwdSeedMaxTries] polls, by which point a login shell that will never
+  /// read its input is far rarer than one that took a few seconds to start.
   void _seedCwdReporting(TerminalSession session) {
-    Future.delayed(const Duration(milliseconds: 900), () {
-      if (session.connectionStatus != ConnectionStatus.remote) return;
+    _cwdSeedTimers.remove(session.id)?.cancel();
+    var tries = 0;
+    _cwdSeedTimers[session.id] = Timer.periodic(_cwdSeedPollInterval, (timer) {
+      if (session.connectionStatus != ConnectionStatus.remote) {
+        _cwdSeedTimers.remove(session.id);
+        timer.cancel();
+        return;
+      }
+      tries++;
+      final promptUp = tries >= _cwdSeedMaxTries ||
+          AgentScreen.looksLikeShellPrompt(_sessionScreenLines(session, 6));
+      if (!promptUp) return;
+      _cwdSeedTimers.remove(session.id);
+      timer.cancel();
       const cmd =
           " PROMPT_COMMAND='printf \"\\033]7;file://\$HOSTNAME\$PWD\\033\\134\"'"
           "\${PROMPT_COMMAND:+;\$PROMPT_COMMAND}\r";
@@ -5411,6 +5442,19 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         debugPrint('Error seeding cwd reporting: $e');
       }
     });
+  }
+
+  /// The visible tail as the screen classifiers want it: one string per line,
+  /// right-trimmed, trailing blank lines dropped.
+  List<String> _sessionScreenLines(TerminalSession session, int lines) {
+    final screen = _terminalTail(session, lines)
+        .split('\n')
+        .map((l) => l.trimRight())
+        .toList();
+    while (screen.isNotEmpty && screen.last.trim().isEmpty) {
+      screen.removeLast();
+    }
+    return screen;
   }
 
   /// The directory git operations should run in for [session]: the terminal's
